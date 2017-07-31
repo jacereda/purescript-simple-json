@@ -4,12 +4,15 @@ import Prelude
 
 import Control.Monad.Eff (Eff)
 import Control.Monad.Except (runExcept)
-import Data.Either (Either, isRight)
-import Data.Foreign (MultipleErrors)
+import Data.Either (Either(..), isRight)
+import Data.Foreign (ForeignError(..), MultipleErrors, fail)
 import Data.Foreign.NullOrUndefined (NullOrUndefined)
+import Data.Generic.Rep (class Generic)
+import Data.Generic.Rep.Eq (genericEq)
+import Data.Generic.Rep.Ord (genericCompare)
 import Data.Map (Map)
 import Data.StrMap (StrMap)
-import Simple.JSON (class ReadForeign, readJSON)
+import Simple.JSON (class ReadForeign, read, readJSON)
 import Test.Spec (describe, it)
 import Test.Spec.Assertions (shouldEqual)
 import Test.Spec.Reporter (consoleReporter)
@@ -45,6 +48,22 @@ type MyTestMap =
   , b :: Map Int String
   }
 
+data Key = Foo | Bar
+
+derive instance keyGeneric :: Generic Key _
+instance keyEq :: Eq Key where eq = genericEq
+instance keyOrd :: Ord Key where compare = genericCompare
+instance keyReadForeign :: ReadForeign Key where
+  readImpl v = case runExcept $ read v of
+    Right "foo" -> pure Foo
+    Right "bar" -> pure Bar
+    _ -> fail $ ForeignError $ "unknown key"
+
+type MyTestMapK =
+  { a :: Int
+  , b :: Map Key String
+  }
+
 main :: Eff (RunnerEffects ()) Unit
 main = run [consoleReporter] do
   describe "readJSON" do
@@ -78,3 +97,8 @@ main = run [consoleReporter] do
         { "a": 1, "b": {"1": "one", "2": "two"} }
       """
       isRight (result :: E MyTestMap) `shouldEqual` true
+    it "works with JSON containing Map field with sum type" do
+      let result = handleJSON """
+        { "a": 1, "b": {"foo": "one", "bar": "two"} }
+      """
+      isRight (result :: E MyTestMapK) `shouldEqual` true
